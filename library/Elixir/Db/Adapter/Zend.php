@@ -9,18 +9,22 @@ class Elixir_Db_Adapter_Zend implements Elixir_Db_Adapter_Interface {
 		}
 		$this->_adapter = $adapter;
 	}
-
-	public function fetchRow(Elixir_Db_Select Interface $select) {
-		if(!$select instanceof Elixir_Db_Select_Zend) {
-			$select = Elixir_Db_Select_Zend::convertToZend($select);
-		}
-		return $this->_adapter->fetchRow($select->toZendSelect(), array(), Zend_Db::FETCH_ASSOC);
+	
+	public function query() {
+		return new Elixir_Db_Query_Zend($this->_adapter);
 	}
 
-	public function fetchAssoc(Elixir_Db_Select Interface $select) {
-		if(!$select instanceof Elixir_Db_Select_Zend) {
-			$select = Elixir_Db_Select_Zend::convertToZend($select);
+	public function fetchRow(Elixir_Db_Query_Interface $query) {
+		if(!$select instanceof Elixir_Db_Query_Zend) {
+			throw Elixir_Exception('you can only use Zend Query objects with this adapter');
 		}
-		return $this->_adapter->fetchAssoc($select->toZendSelect());
+		return $this->_adapter->fetchRow($query->getZendSelect(), array(), Zend_Db::FETCH_ASSOC);
+	}
+
+	public function fetchAssoc(Elixir_Db_Query_Interface $query) {
+		if(!$query instanceof Elixir_Db_Query_Zend) {
+			throw Elixir_Exception('you can only use Zend Query objects with this adapter');
+		}
+		return $this->_adapter->fetchAssoc($query->getZendSelect());
 	}
 }
