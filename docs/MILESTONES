@@ -1,0 +1,24 @@
+The following is a least of features that must be complete in order to
+increment to the specified version number.
+For a feature to be considered complete the code must have 100% unit
+test code coverage.
+
+0.1
+	- basic elixir object is readable.
+0.2
+	- elixir array as readable.
+0.3
+	- one to one relationships are readable
+0.4
+	- one to many relationships are readable
+	- many to one relationships are readable
+0.5
+	- many to many relationships are readable
+0.6
+	- basic eleixir objects are savable
+0.7
+	- arrays are savable.
+0.8
+	- arrays are orderable.
+0.9
+	- saving is optimised
