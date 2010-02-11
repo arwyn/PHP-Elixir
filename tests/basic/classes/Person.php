@@ -1,7 +1,9 @@
 <?php
 require_once 'Elixir/Object.php';
+require_once 'Zend/Db.php';
 
 class Person extends Elixir_Object {
+	protected $_table = 'person';
 	protected $_definition = array(
 		'id' => array(
 			'field' => 'person_id',
@@ -25,4 +27,10 @@ class Person extends Elixir_Object {
 			'type' => 'float'
 		)
 	);
+	
+	static protected function _initAdapter() {
+		$this->_adapter = Zend_Db::factory('Zend_Db_Adapter_Pdo_Sqlite',array(
+			'dbname' => dirname(__FILE__ . '/../basic.db')
+		));
+	}
 }
