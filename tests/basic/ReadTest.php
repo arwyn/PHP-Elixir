@@ -1,7 +1,6 @@
 <?php
 require_once 'PHPUnit/Framework.php';
 require_once 'classes/Person.php';
-require_once 'Elixir/Db/Adapter.php';
 
 class ReadTest extends PHPUnit_Framework_TestCase {
 	public $person = null;
@@ -59,7 +58,4 @@ class ReadTest extends PHPUnit_Framework_TestCase {
 		$this->assertTrue($this->person->dob instanceof DateTime, 'Date of birth must be instance of DateTime');
 		$this->assertEquals('1982-05-27', $this->person->dob->format('Y-m-d'), 'Date of Birth should 1982-05-27');
 	}
-	
-	
-	
-};
+}

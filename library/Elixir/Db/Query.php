@@ -3,7 +3,7 @@ require_once 'Elixir/Db/Query/Interface.php';
 require_once 'Elixir/Db/Adapter/Interface.php';
 
 /**
- * Represents a Db Query where the the constraints are Elixir_Objects
+ * Represents a collection of constraints to be used when querying db.
  * 
  * @author Arwyn Hainsworth
  *

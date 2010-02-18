@@ -1,10 +1,11 @@
 <?php
 require_once 'Elixir/Object.php';
 require_once 'Zend/Db.php';
+require_once 'Elixir/Db/Adapter/Zend.php';
 
 class Person extends Elixir_Object {
-	protected $_table = 'person';
-	protected $_definition = array(
+	protected static $_table = 'person';
+	protected static $_definition = array(
 		'id' => array(
 			'field' => 'person_id',
 			'type' => 'int',
@@ -29,8 +30,8 @@ class Person extends Elixir_Object {
 	);
 	
 	static protected function _initAdapter() {
-		$this->_adapter = Zend_Db::factory('Zend_Db_Adapter_Pdo_Sqlite',array(
+		static::$_adapter = new Elixir_Db_Adapter_Zend(Zend_Db::factory('Pdo_Sqlite',array(
 			'dbname' => dirname(__FILE__ . '/../basic.db')
-		));
+		)));
 	}
 }
