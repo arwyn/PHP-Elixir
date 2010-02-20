@@ -3,6 +3,8 @@
 interface Elixir_Db_Adapter_Interface {
 	public function init();
 
+	public function quote($var);
+	
 	public function execSelect($query);
 	public function execUpdate($query);
 	public function execDelete($query);

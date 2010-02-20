@@ -1,17 +1,19 @@
 <?php
-class Elixir_Array implements countable {
+class Elixir_Array implements Countable, Iterator {
 	protected $_type = null;
 	protected $_session = null;
-	protected $_query = null;
+	protected $_constraint = null;
+	protected $_fields = null;
+	
 	protected $_values = null;
+	
 	protected $_options = array(
 		'lazy' => true
 	);
 	
 	protected $_pointer = 0;
 	
-	public function __construct($query, $session, $options = array()) {
-		$this->_query = $query;
+	public function __construct($session, $options = array()) {
 		$this->_session = $session;
 		$this->_options = array_merge($this->_options, $options);
 	}
@@ -53,11 +55,18 @@ class Elixir_Array implements countable {
 	
 	public function refresh() {
 		if(!$this->_type) {
-			throw new Elixir_Exception('no type set');
+			throw new Elixir_Exception_InvalidType();
+		}
+		if(!$this->_constraint) {
+			$this->_constraint = new Elixir_Db_Constraint();
+		}
+		if(!$this->_fields) {
+			$this->_fields = call_user_func(array($this->_type, 'getGroupFields'));
 		}
 		
 		// get the db rows.
-		$this->_values = $this->_query->fetchAssoc();
+		$adapter = call_user_func(array($this->_type, 'getAdapter'));
+		$this->_values = $adapter->select($this->_type, $this->_fields, $this->_constraint);
 		
 		// reset internal array pointer
 		$this->rewind();

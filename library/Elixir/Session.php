@@ -11,7 +11,7 @@ class Elixir_Session {
 	public function __construct() {
 	}
 	
-	static public function getDefaultInstance() {
+	static public function getDefaultSession() {
 		if(!static::$_instance) {
 			static::$_instance = new static();
 		}
