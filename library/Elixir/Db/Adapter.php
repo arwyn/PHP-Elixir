@@ -26,23 +26,41 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		return self::$_registry[$id];
 	}
 	
-	public function select($class, $fields = null, Elixir_Db_Constraint $constraints = null, $order = null, $limit = null, $offset = null) {
+	public function select($type, $fields, Elixir_Db_Constraint $constraint) {
 		//get object definition
-		$def = $this->_getDefinition($class);
-		$table = $this->_getTable($class);
+		$def = $this->_getDefinition($type);
+		$table = $this->_getTable($type);
 		
+		if(!$fields) {
+			require_once 'Elixir/Exception/Adapter.php';
+			throw new Elixir_Exception_Adapter('fields must be provided');
+		}
 		$select = $this->_buildSelect($def, $fields);
-		$from = $this->_buildFrom($def, $table, $constraints);
-		$where = $this->_buildWhere($def, $constraints);
-		$order = $order ? $this->_buildOrder($def, $order) : '';
-		$limit = $limit ? $this->_buildLimit($def, $limit, $offset) : '';
-		
-		$query = implode(' ', array($select, $from, $where, $order, $limit));
+		$from = $this->_buildFrom($def, $table, $constraint);
+		$where = $this->_buildWhere($def, $constraint);
+//		$order = $order ? $this->_buildOrder($def, $order) : '';
+//		$limit = $limit ? $this->_buildLimit($def, $limit, $offset) : '';
+	
+		$query = implode(' ', array($select, $from, $where));
 
 		return $this->execSelect($query);
 	}
 	
-	public function update($class, $data, Elixir_Db_Constraint $constraints = null) {
+	public function count($type, Elixir_Db_Constraint $constraint) {
+		$def = $this->_getDefinition($type);
+		$table = $this->_getTable($type);
+		
+		$select = $this->_buildSelect($def, false);
+		$from = $this->_buildFrom($def, $table, $constraint);
+		$where = $this->_buildWhere($def, $constraint);
+
+		$query = implode(' ', array($select, $from, $where));
+
+		$res = $this->execSelect($query);
+		return (int)$res[0]['count'];
+	}
+	
+	public function update($class, $data, Elixir_Db_Constraint $constraint) {
 		$def = $this->_getDefinition($class);
 		$table = $this->_getTable($class);
 		
@@ -96,10 +114,13 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 	protected function _buildSelect($def, $fields) {
 		$select = 'SELECT ';
 
-		if($fields) {
-			$cols = $this->_getColNamesFromFields($def, $fields);
-			foreach($cols as $k => &$col) {
-				$col = "d.$col";
+		if(!$fields) {
+			$select .= 'COUNT(*) AS count';
+		}
+		elseif(is_array($fields) || is_string($fields)) {
+			$cols = $this->_getColNamesFromFields($def, (array)$fields);
+			foreach($cols as $k => $col) {
+				$cols[$k] = "d.$col";
 			}
 			$select .= implode(', ', $cols);
 		}
@@ -108,7 +129,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		}
 		return $select;
 	}
-	
+		
 	protected function _buildFrom($def, $table, $constaints) {
 		$from = "FROM $table AS d";
 		
@@ -210,7 +231,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 					throw new Elixir_Exception_Constraint('unknown constraint');
 			}
 		}
-		$where .= implode(' && ', $conds);
+		$where .= $conds ? implode(' && ', $conds) : 1;
 		return $where;
 	}
 	
@@ -228,13 +249,13 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		$colnames = array();
 		foreach((array)$fields as $field) {
 			if(is_array($def[$field]['field'])) {
-				$colnames += array_keys($def[$field]['field']);
+				$colnames = array_merge($colnames, array_flip(array_keys($def[$field]['field'])));
 			}
 			else {
-				$colnames += (array)$def[$field]['field'];
+				$colnames = array_merge($colnames, array_flip((array)$def[$field]['field']));
 			}
 		}
-		return $colnames;
+		return array_keys($colnames);
 	}
 	
 	protected function _convertObjectToFields($obj, $fields=null) {

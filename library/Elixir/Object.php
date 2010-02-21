@@ -1,5 +1,6 @@
 <?php
 require_once 'Elixir/Session.php';
+require_once 'Elixir/Array.php';
 require_once 'Elixir/Db/Constraint.php';
 
 abstract class Elixir_Object extends stdClass {
@@ -156,7 +157,7 @@ abstract class Elixir_Object extends stdClass {
 			$value = $this->_values[$name];
 		}
 		// if we are new object, return the default.
-		if($value === null && $this->_status == self::STATUS_NEW) {
+		elseif($value === null && $this->_status == self::STATUS_NEW) {
 			$value = static::$_definitions[$name]['default']; 
 		}
 		// otherwise contact the DB to retrieve this info.
@@ -176,7 +177,10 @@ abstract class Elixir_Object extends stdClass {
 				case 'boolean':
 					return (boolean)$value;
 				case 'date':
-					return new DateTime($value);
+					if(!$value instanceof DateTime) {
+						$value = new DateTime($value);
+					}
+					return $value;
 				default:
 					$class = static::$_definition[$name]['type'];
 					// if value is object, return it as is.
@@ -218,9 +222,15 @@ abstract class Elixir_Object extends stdClass {
 				$this->_values[$name] = (string)$value;
 				break;
 			case 'date':
-				//todo
-			case 'int':
+				if(!$value instanceof DateTime) {
+					$value = new DateTime($value);
+				}
+				$this->_values[$name] = $value;
+				break; 
 			case 'boolean':
+				$this->_values[$name] = (boolean)$value;
+				break;
+			case 'int':
 				$this->_values[$name] = (int)$value;
 				break;
 			case 'float':
@@ -600,6 +610,10 @@ abstract class Elixir_Object extends stdClass {
 		return static::$_table;
 	}
 	
+	static public function getAdapter() {
+		static::_init();
+		return static::$_adapter;
+	}
 	static protected function _getDefaultSession() {
 		return Elixir_Session::getDefaultSession();
 	}

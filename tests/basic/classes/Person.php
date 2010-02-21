@@ -1,7 +1,6 @@
 <?php
 require_once 'Elixir/Object.php';
-require_once 'Zend/Db.php';
-require_once 'Elixir/Db/Adapter/Zend.php';
+require_once 'Elixir/Db/Adapter/Pdo.php';
 
 class Person extends Elixir_Object {
 	protected static $_table = 'person';
@@ -19,7 +18,7 @@ class Person extends Elixir_Object {
 			'type' => 'string'
 		),
 		'dob' => array(
-			'type' => 'datetime',
+			'type' => 'date',
 		),
 		'married' => array(
 			'type' => 'boolean'
@@ -29,9 +28,8 @@ class Person extends Elixir_Object {
 		)
 	);
 	
-	static protected function _initAdapter() {
-		static::$_adapter = new Elixir_Db_Adapter_Zend(Zend_Db::factory('Pdo_Sqlite',array(
-			'dbname' => dirname(__FILE__ . '/../basic.db')
-		)));
-	}
+	protected static $_adapter = array(
+		'class' => 'Elixir_Db_Adapter_Pdo',
+		'dsn' => 'sqlite:basic.db'
+	); 
 }

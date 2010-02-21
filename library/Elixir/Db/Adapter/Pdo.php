@@ -14,6 +14,7 @@ class Elixir_Db_Adapter_Pdo extends Elixir_Db_Adapter {
 	
 	public function execSelect($query) {
 		$this->init();
+		var_dump($query);
 		if($res = $this->_db->query($query)) {
 			return $res->fetchAll(PDO::FETCH_ASSOC);
 		}

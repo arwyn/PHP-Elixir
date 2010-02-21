@@ -28,15 +28,49 @@ class Elixir_Array implements Countable, Iterator {
 		return;
 	}
 	
+	public function getType() {
+		if(!$this->_type) {
+			require_once 'Elixir/Exception/InvalidType.php';
+			throw new Elixir_Exception_InvalidType('type not set');
+		}
+		return $this->_type;
+	}
+
 	public function setType($type) {
 		if(!is_subclass_of($type, 'Elixir_Object')) {
-			throw new Elixir_Exception('invalid type');
+			require_once 'Elixir/Exception/InvalidType.php';
+			throw new Elixir_Exception_InvalidType();
 		}
 		$this->_type = $type;
 	}
 	
-	public function getType() {
-		return $this->_type;
+	public function getConstraint() {
+		if(!$this->_constraint) {
+			$this->_constraint = new Elixir_Db_Constraint();
+		}
+		return $this->_constraint;
+	}
+	
+	public function setConstraint(Elixir_Db_Constraint $constraint) {
+		$this->_constraint = $constraint;
+		return $this;
+	}
+	
+	public function getFields() {
+		if(!$this->_fields) {
+			$this->_fields = ${$this->getType()}::getGroupFields('default');
+		}
+		return $this->_fields;
+	}
+	
+	public function setFields($fields) {
+		$this->_fields = (array)$fields;
+		return $this;
+	}
+	
+	public function addFields($fields) {
+		$this->_fields = array_unique($this->_fields + $fields);
+		return $this;
 	}
 	
 	public function getOption($option) {
@@ -54,19 +88,13 @@ class Elixir_Array implements Countable, Iterator {
 	}
 	
 	public function refresh() {
-		if(!$this->_type) {
-			throw new Elixir_Exception_InvalidType();
-		}
-		if(!$this->_constraint) {
-			$this->_constraint = new Elixir_Db_Constraint();
-		}
-		if(!$this->_fields) {
-			$this->_fields = call_user_func(array($this->_type, 'getGroupFields'));
-		}
+		$type = $this->getType();
+		$constraint = $this->getConstraint();
+		$fields = $this->getFields();
 		
 		// get the db rows.
-		$adapter = call_user_func(array($this->_type, 'getAdapter'));
-		$this->_values = $adapter->select($this->_type, $this->_fields, $this->_constraint);
+		$adapter = $type::getAdapter();
+		$this->_values = $adapter->select($type, $fields, $constraint);
 		
 		// reset internal array pointer
 		$this->rewind();
@@ -91,10 +119,19 @@ class Elixir_Array implements Countable, Iterator {
 	 * @return int
 	 */
 	public function count() {
+		// if we have not been loaded yet, do a db count
 		if($this->_values === null) {
-			$this->refresh();
+			$type = $this->getType();
+			$constraint = $this->getConstraint();
+		
+			// get the db rows.
+			$adapter = $type::getAdapter();
+			return $adapter->count($type, $constraint);
 		}
-		return count($this->_values);
+		// if a select has already been perform, just count the results
+		else {
+			return count($this->_values);
+		}
 	}
 	
 	//
@@ -133,7 +170,7 @@ class Elixir_Array implements Countable, Iterator {
 	}
 	
 	public function valid() {
-		return $this->offsetExists($this->_pointer);
+		return $this->offsetExist($this->_pointer);
 	}
 	
 	//
