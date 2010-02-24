@@ -3,11 +3,16 @@ require_once 'Elixir/Session.php';
 require_once 'Elixir/Array.php';
 require_once 'Elixir/Db/Constraint.php';
 
-abstract class Elixir_Object extends stdClass {
+abstract class Elixir_Object {
 	const STATUS_NEW     = 'new';
 	const STATUS_LOADED  = 'loaded';
 	const STATUS_UPDATED = 'updated';
 	const STATUS_DELETED = 'deleted';
+	
+	const RELATION_ONE_TO_ONE   = 'one_to_one';
+	const RELATION_ONE_TO_MANY  = 'one_to_many';
+	const RELATION_MANY_TO_ONE  = 'many_to_one';
+	const RELATION_MANY_TO_MANY = 'many_to_many';
 	
 	/**
 	 * Has the class been initialised before?
@@ -53,20 +58,20 @@ abstract class Elixir_Object extends stdClass {
 	
 	protected $_status;
 	
-	private $__oid__;
+	protected $_oid;
 	
-	public function __construct($fields = array(), $session = null, $check_integrity = false, $new = true) {
+	public function __construct($fields = array(), $session = null, $check_integrity = false) {
 		static::_init();
 		
 		// load the default session if one not provided
 		if(!$session) {
-			$session = static::_getDefaultSession();
+			$session = Elixir_Session::getDefaultSession();
 		}
 		
 		$def = &static::$_definition;
 		
 		// get the primary key names
-		$pks = static::getPrimaryKeyFields();
+		$pks = static::getPrimaryKeyFieldNames();
 		
 		$pks_vals = array();
 		foreach($fields as $field => &$val) {
@@ -100,36 +105,25 @@ abstract class Elixir_Object extends stdClass {
 		) {
 			throw new Elixir_Exception_DuplicateRow();
 		}
-
+		
 		// checks are over, fill up this object with given fields
 		foreach($fields as $field => $value) {
 			// don't try to set pks to null. will cause error.
 			if(in_array($field, $pks_auto) && is_null($value)) {
 				continue;
 			}
-			$this->$field = $value;
+			$this->_set($field, $value, true);
 		}
 		
-		// set object hash (uuid v3)
-		$this->__oid__ = sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-			// 32 bits for "time_low"
-			mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-			// 16 bits for "time_mid"
-			mt_rand(0, 0xffff),
-			// 16 bits for "time_hi_and_version",
-			// four most significant bits holds version number 4
-			mt_rand(0, 0x0fff) | 0x4000,
-			// 16 bits, 8 bits for "clk_seq_hi_res",
-			// 8 bits for "clk_seq_low",
-			// two most significant bits holds zero and one for variant DCE1.1
-			mt_rand(0, 0x3fff) | 0x8000,
-			// 48 bits for "node"
-			mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
-		);
+		// set object hash (uuid v4)
+		$this->_oid = Elixir_Utils::UUIDv4(); 
 		
 		// set the session and set status
 		$this->_session = $session;
-		$this->_setStatus($new ? static::STATUS_NEW : static::STATUS_LOADED);
+		
+		$this->_setStatus(static::STATUS_NEW);
+		
+		$this->_postCreate();
 	}
 
 	public function __get($name) {
@@ -158,7 +152,7 @@ abstract class Elixir_Object extends stdClass {
 		}
 		// if we are new object, return the default.
 		elseif($value === null && $this->_status == self::STATUS_NEW) {
-			$value = static::$_definitions[$name]['default']; 
+			$value = static::$_definition[$name]['default']; 
 		}
 		// otherwise contact the DB to retrieve this info.
 		else {
@@ -198,11 +192,16 @@ abstract class Elixir_Object extends stdClass {
 		$this->_set($name, $value, true);
 		$this->_setStatus(self::STATUS_UPDATED);
 	}
+	
+	public function getOID() {
+		return $this->_oid;
+	}
+	
 	protected function _set($name, $value, $check_integrity = true) {
 		$def = &static::$_definition;
 		
 		// make sure object is still live
-		if($this->_status == 'deleted') {
+		if($this->_status == self::STATUS_DELETED) {
 			require_once 'Elixir/Exception.php';
 			throw new Elixir_Exception('Cannot edit deleted object');
 		}
@@ -212,7 +211,7 @@ abstract class Elixir_Object extends stdClass {
 			throw new Elixir_Exception(sprintf('No such field (%s)', $name));
 		}
 		
-		$cvalue = isset($this->_values[$name]) ? $this->_values[$name] : null;
+//		$cvalue = isset($this->_values[$name]) ? $this->_values[$name] : null;
 		
 		// if type is a builtin, save directly to object.
 		switch($def[$name]['type']) {
@@ -221,12 +220,6 @@ abstract class Elixir_Object extends stdClass {
 			case 'blob':
 				$this->_values[$name] = (string)$value;
 				break;
-			case 'date':
-				if(!$value instanceof DateTime) {
-					$value = new DateTime($value);
-				}
-				$this->_values[$name] = $value;
-				break; 
 			case 'boolean':
 				$this->_values[$name] = (boolean)$value;
 				break;
@@ -236,9 +229,21 @@ abstract class Elixir_Object extends stdClass {
 			case 'float':
 				$this->_values[$name] = (float)$value;
 				break;
+			case 'date':
+				if(!$value instanceof DateTime) {
+					$value = new DateTime($value);
+				}
+				$this->_values[$name] = $value;
+				break; 
 			default:
 				// objects of correct type, or thier keys are acceptable.
 				do {
+					// if relation is one_to_many or many_to_many, not supported yet
+					if(in_array($def[$name]['relation'], array(self::RELATION_MANY_TO_MANY, self::RELATION_ONE_TO_MANY))) {
+						require_once 'Elixir/Exception/NotImplemented.php';
+						throw new Elixir_Exception_NotImplemented();
+					}
+					
 					// if object is valid type, skip further checks
 					if(is_object($value) && is_subclass_of($value, $def[$name]['type'])) {
 						break;
@@ -259,11 +264,11 @@ abstract class Elixir_Object extends stdClass {
 					// now try to convert to object. exceptions will be thrown if the keys aren't valid
 					// this will retieve the object from the db
 					if($check_integrity) {
-						$value = call_user_func($def[$name]['type'], 'get', $value, false, false, $this->_session);
+						$value = call_user_func(array($def[$name]['type'], 'get'), $value, $this->_session);
 					}
 					// if we are 100% sure in our data (have done the check before, skip it)
 					else {
-						$value = new $def[$name]['type']($value, $this->_session, false, true);
+						$value = call_user_func(array($def[$name]['type'] , '_create'), $value, $this->_session);
 					}
 				} while(false);
 				
@@ -273,11 +278,47 @@ abstract class Elixir_Object extends stdClass {
 		
 		return; //void
 	}
+
+	protected function _postCreate() {
+	}
+	
+	/**
+	 * Create object without calling the constructor.
+	 * 
+	 * @return Elixir_Object
+	 */
+	static protected function _create(array $fields, Elixir_Session $session) {
+		// create serialized string of an empty object
+		$class = get_called_class();
+		$sobject = sprintf('O:%d:"%s":0:{}', strlen($class), $class);
+		
+		// by unserializing, we avoid calling __construct()
+		$object = unserialize($sobject);
+		
+		// generate oid
+		$object->_oid = Elixir_Utils::UUIDv4();
+		
+		// add properties
+		$object->_session = $session;
+
+		// checks are over, fill up this object with given fields
+		foreach($fields as $field => $value) {
+			$object->_set($field, $value, false);
+		}
+		
+		// set status
+		$object->_setStatus(self::STATUS_LOADED);
+		
+		// call any othe init code that might be needed
+		$object->_postCreate();
+		
+		return $object;
+	}
 	
 	static public function get($id, $fields = false, $reload = false, $session = null) {
 		static::_init();
 		// get pks
-		$pks = static::getPrimaryKeyFields();
+		$pks = static::getPrimaryKeyFieldNames();
 		
 		// make sure all keys have been given.
 		if(!is_array($id) && count($pks) == 1) {
@@ -290,7 +331,7 @@ abstract class Elixir_Object extends stdClass {
 		
 		// load default session if not provided
 		if(!$session) {
-			$session = static::_getDefaultSession();
+			$session = Elixir_Session::getDefaultSession();
 		}
 		
 		// if the object is already loaded in the session, then use it.
@@ -310,7 +351,7 @@ abstract class Elixir_Object extends stdClass {
 		}
 		// false/null/empty => default
 		elseif(!$fields) {
-			$fields = static::getGroupFields('default');	
+			$fields = static::getGroupFieldNames('default');	
 		}
 		// array/string => selected + pks
 		else {
@@ -327,7 +368,7 @@ abstract class Elixir_Object extends stdClass {
 		$values = static::_dbRowToValues($data);
 
 		// merge the ids with the values.
-		return new static($values, $session, false, false);
+		return static::_create($values, $session);
 	}
 	
 	static public function getBy($constraint = null, $fields = false, $order=null, $session = null) {
@@ -356,16 +397,16 @@ abstract class Elixir_Object extends stdClass {
 		}
 		// false/null/empty => default
 		elseif(!$fields) {
-			$fields = static::getGroupFields('default');	
+			$fields = static::getGroupFieldNames('default');	
 		}
 		// array/string => selected + pks
 		else {
 			$fields = array_unique((array)$fields + static::getPrimaryKeyFieldNames());
 		}
-				
+		
 		// load default session if not provided
 		if(!$session) {
-			$session = static::_getDefaultSession();
+			$session = Elixir_Session::getDefaultSession();
 		}
 		
 		$array = new Elixir_Array($session);
@@ -397,7 +438,7 @@ abstract class Elixir_Object extends stdClass {
 		}
 		
 		// not found, so create new object
-		return new static($values, $session, false, false);
+		return static::_create($values, $session);
 	}
 	
 	static public function getDefinition() {
@@ -405,18 +446,25 @@ abstract class Elixir_Object extends stdClass {
 		return static::$_definition;
 	}
 	
-	public function save($use_transaction = true) {
-		// TODO
-	}
-	
-	public function getChanges() {
-		// TODO
-	}
-	
 	public function getId() {
-		return static::_generateId($this->_values);
+		$id = array();
+		foreach(static::getPrimaryKeyFieldNames() as $field) {
+			$val = $this->$field;
+			if($val instanceof Elixir_Object) {
+				$val = $val->getId();
+			}
+			$id[] = $val;
+		}
+		return $id;
 	}
 	
+	static protected function _generateId($id) {
+		if($id instanceof Elixir_Object) {
+			$id = $id->getId();
+		}
+		return get_called_class() .':'. serialize($id);
+	}
+		
 	static protected function _init() {
 		// if already initialised, don't do it twice.
 		if(static::$_initialised) {
@@ -427,28 +475,46 @@ abstract class Elixir_Object extends stdClass {
 			return true;
 		}
 		
+		// init adapter
+		static::_initAdapter();
+				
 		// make sure definition is provided
 		if(!static::$_definition || !static::$_table) {
 			require_once 'Elixir/Exception/Definition.php';
 			throw new Elixir_Exception_Definition('table not defined');
 		}
+		
 		// parent definition should be merged into current class
 		static::$_definition = array_merge(
 			call_user_func(array(get_parent_class(get_called_class()), 'getDefinition')),
 			static::$_definition
 		);
-		// init adapter
-		static::_initAdapter();
-				
+		
+		static::_initDefinition();
+		
+		// mark
+		return static::$_initialised = true;
+	}
+	
+	static protected function _initAdapter() {
+		if(!static::$_adapter) {
+			require_once 'Elixir/Exception/Definition.php';
+			throw new Elixir_Exception_Definition('no adapter params supplies');
+		}
+		static::$_adapter = Elixir_Db_Adapter::factory(static::$_adapter);
+	}
+
+	static protected function _initDefinition() {
 		// normalise definition
 		foreach(static::$_definition as $field => &$def) {
 			// set defaults
 			$defaults = array(
 				'field' => $field,
-				'group' => 'default',
+				'group' => false,
 				'primary_key' => false,
 				'auto_increment' => false,
-				'default' => null
+				'default' => null,
+				'relation' => false
 			);
 			foreach($defaults as $key => $default) {
 				if(!isset($def[$key])) {
@@ -468,8 +534,19 @@ abstract class Elixir_Object extends stdClass {
 			}
 
 			// check def contraints
+			// only pks can be auto increment
 			if($def['auto_increment'] && !$def['primary_key']) {
 				throw new Elixir_Exception_Definition('only primary keys may auto increment');
+			}
+			// pks must be in the deafult group
+			if($def['primary_key']) {
+				if(!$def['group']) {
+					$def['group'] = 'default';
+				}
+				elseif($def['group'] != 'default') {
+					require_once 'Elixir/Exception/Definition.php';
+					throw new Elixir_Exception_Definition('primary keys must be in default group');	
+				}
 			}
 			// check the type
 			// builtin types
@@ -479,21 +556,28 @@ abstract class Elixir_Object extends stdClass {
 				
 				// basic sanity checks
 				if(!is_scalar($def['field'])) {
+					require_once 'Elixir/Exception/Definition.php';
 					throw new Elixir_Exception_Definition('the field of a builtin type must be a scalar (db col name).');
 				}
 			}
-			// if not builtin, must be elixir object
+			// if not builtin, must be elixir object relation
 			else {
+				// check relation
+				if(!in_array($def['relation'], array(self::RELATION_ONE_TO_ONE, self::RELATION_ONE_TO_MANY, self::RELATION_MANY_TO_ONE, self::RELATION_MANY_TO_MANY))) {
+					require_once 'Elixir/Exception/Definition.php';
+					throw new Elixir_Exception_Definition('the relation must be set for non-builtin types');
+				}
 				// check inheritance
 				if(
 					!isset($def['type'])
 					|| (class_exists($def['type']) && is_subclass_of($def['type'], get_called_class()))
 				) {
+					require_once 'Elixir/Exception/Definition.php';
 					throw new Elixir_Exception_Definition(sprintf('unknown type or class does not inherit from %s', get_class(self))); 
 				}
 				
 				// field must be an array. The key is the db col and the value is the key field name.
-				// The field name is an array of concecative field names, so in the case of a compound key,
+				// The field name is an array of consecutive field names, so in the case of a compound key,
 				// the array length will be larger than one.
 				if(!is_array($def['field'])) {
 					require_once 'Elixir/Exception/Definition.php';
@@ -502,20 +586,9 @@ abstract class Elixir_Object extends stdClass {
 				//TODO stricter check. 
 			}
 		}
-		
-		// mark
-		return static::$_initialised = true;
 	}
 	
-	static protected function _initAdapter() {
-		if(!static::$_adapter) {
-			require_once 'Elixir/Exception/Definition.php';
-			throw new Elixir_Exception_Definition('no adapter params supplies');
-		}
-		static::$_adapter = Elixir_Db_Adapter::factory(static::$_adapter);
-	}
-	
-	static public function getGroupFields($group) {
+	static public function getGroupFieldNames($group) {
 		$def = &static::$_definition;
 		return array_filter(array_keys($def), function($field) use(&$def, &$group) {
 			return $def[$field]['group'] == $group;
@@ -548,11 +621,11 @@ abstract class Elixir_Object extends stdClass {
 		
 		// load every field in group that is not set.
 		if($load_group && $reload) {
-			$names = static::getGroupFields($def[$name]['group']);
+			$names = static::getGroupFieldNames($def[$name]['group']);
 		}
 		elseif($load_group) {
 			$values = &$this->_values;
-			$names = array_filter(static::getGroupFields($def[$name]['group']), function($field) use(&$values) {
+			$names = array_filter(static::getGroupFieldNames($def[$name]['group']), function($field) use(&$values) {
 				return !array_key_exists($field, $values);
 			});
 		}
@@ -561,7 +634,7 @@ abstract class Elixir_Object extends stdClass {
 		}
 		
 		// use primary keys to constrain to a single row
-		$pks = static::getPrimaryKeyFields();
+		$pks = static::getPrimaryKeyFieldNames();
 		$constraint = new Elixir_Db_Constraint();
 		foreach(array_intersect_key($this->_values, array_flip($pks)) as $field => $value) {
 			$constraint->addField($field, $value);
@@ -595,7 +668,18 @@ abstract class Elixir_Object extends stdClass {
 		return $this->_status;
 	}
 	
-	static public function getPrimaryKeyFields() {
+	public function getSession() {
+		if(is_string($this->_session)) {
+			$this->_session = Elixir_Session::getSession($this->_session);
+		}
+		if(!$this->_session) {
+			require_once 'Elixir/Exception.php';
+			throw new Elixir_Exception('invalid session id');
+		}
+		return $this->_session;
+	}
+	
+	static public function getPrimaryKeyFieldNames() {
 		$pks = array();
 		foreach(static::$_definition as $field => &$def) {
 			if($def['primary_key']) {
@@ -614,13 +698,4 @@ abstract class Elixir_Object extends stdClass {
 		static::_init();
 		return static::$_adapter;
 	}
-	static protected function _getDefaultSession() {
-		return Elixir_Session::getDefaultSession();
-	}
-	
-	static protected function _generateId($id) {
-		// TODO
-		
-		return '';
-	} 
 }
