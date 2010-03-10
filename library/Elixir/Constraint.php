@@ -34,7 +34,6 @@ class Elixir_Constraint {
 		
 	public function clearFields() {
 		$this->_constraints_field = array();
-		$this->_id = null;
 		return $this;
 	}
 		
@@ -44,7 +43,6 @@ class Elixir_Constraint {
 	
 	public function addField($field, $value) {
 		$this->_constraints_field[] = compact('field', 'value');
-		$this->_id = null;
 		return $this;
 	} 
 	
@@ -54,7 +52,6 @@ class Elixir_Constraint {
 	
 	public function clearConstraints() {
 		$this->_constraints = array();
-		$this->_id = null;
 		return $this;
 	}
 	
@@ -63,8 +60,7 @@ class Elixir_Constraint {
 			require_once 'Elixir/Exception/Constraint/InvalidType.php';
 			throw new Elixir_Exception_Constraint_InvalidType();
 		}
-		$this->_constraints[] = $constraint->fix();
-		$this->_id = null;
+		$this->_constraints[] = $constraint;
 		return $this;
 	}
 	

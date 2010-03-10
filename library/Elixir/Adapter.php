@@ -108,16 +108,16 @@ abstract class Elixir_Adapter implements Elixir_Adapter_Interface {
 	
 	protected function _getDefinition($class) {
 		if(!is_subclass_of($class, 'Elixir_Type')) {
-			require_once 'Elixir/Exception/InvalidClass.php';
-			throw new Elixir_Exception_InvalidClass();
+			require_once 'Elixir/Exception/InvalidType.php';
+			throw new Elixir_Exception_InvalidType();
 		}
 		return call_user_func(array($class, 'getDefinition'));
 	}
 	
 	protected function _getTable($class) {
 		if(!is_subclass_of($class, 'Elixir_Type')) {
-			require_once 'Elixir/Exception/InvalidClass.php';
-			throw new Elixir_Exception_InvalidClass();
+			require_once 'Elixir/Exception/InvalidType.php';
+			throw new Elixir_Exception_InvalidType();
 		}
 		return call_user_func(array($class, 'getTable'));
 	}
@@ -165,15 +165,15 @@ abstract class Elixir_Adapter implements Elixir_Adapter_Interface {
 				throw new Elixir_Exception_Constraint_InvalidField();
 			}
 			switch(true) {
-				// elixir object
+				// elixir type
 				case is_object($value) && $value instanceof Elixir_Type:
 					switch(get_class($value)) {
 						case $def[$field]['type']:
 						case $constraints->getType():
 							break;
 						default:
-							require_once 'Elixir/Exception/Constraint/InvalidClass.php';
-							throw new Elixir_Exception_Constraint_InvalidClass();
+							require_once 'Elixir/Exception/Constraint/InvalidType.php';
+							throw new Elixir_Exception_Constraint_InvalidType();
 					}
 					$fields = $this->_convertObjectToFields($value);
 					$cols = $this->_convertFieldsToCols($def[$field]['field'], $fields);
@@ -182,11 +182,11 @@ abstract class Elixir_Adapter implements Elixir_Adapter_Interface {
 					break;
 				// elixir array => must match at least one element in array.
 				case is_object($value) && $value instanceof Elixir_Array:
-					if($def[$field]['type'] != $value->getClass()) {
-						require_once 'Elixir/Exception/Constraint/InvalidClass.php';
-						throw new Elixir_Exception_Constraint_InvalidClass();
+					if($def[$field]['type'] != $value->getType()) {
+						require_once 'Elixir/Exception/Constraint/InvalidType.php';
+						throw new Elixir_Exception_Constraint_InvalidType();
 					}
-					$adef = $this->_getDefinition($value->getClass());
+					$adef = $this->_getDefinition($value->getType());
 					
 					$or = array();
 					foreach($value->getDbRows() as $row) {
