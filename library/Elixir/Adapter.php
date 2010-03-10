@@ -1,8 +1,8 @@
 <?php
-require_once 'Elixir/Db/Adapter/Interface.php';
-require_once 'Elixir/Db/Constraint.php';
+require_once 'Elixir/Adapter/Interface.php';
+require_once 'Elixir/Constraint.php';
 
-abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
+abstract class Elixir_Adapter implements Elixir_Adapter_Interface {
 	private static $_registry = array();
 	
 	protected $_params = null;
@@ -12,7 +12,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 	}
 	
 	static function factory($params) {
-		if(!isset($params['class']) || !is_subclass_of($params['class'], 'Elixir_Db_Adapter_Interface')) {
+		if(!isset($params['class']) || !is_subclass_of($params['class'], 'Elixir_Adapter_Interface')) {
 			require_once 'Elixir/Exception/Adapter.php';
 			throw new Elixir_Exception_Adapter();
 		}
@@ -26,41 +26,44 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		return self::$_registry[$id];
 	}
 	
-	public function select($type, $fields, Elixir_Db_Constraint $constraint) {
+	public function select($type, array $field_names, Elixir_Constraint $constraint) {
 		//get object definition
 		$def = $this->_getDefinition($type);
 		$table = $this->_getTable($type);
 		
-		if(!$fields) {
+		if(!$field_names) {
 			require_once 'Elixir/Exception/Adapter.php';
 			throw new Elixir_Exception_Adapter('fields must be provided');
 		}
-		$select = $this->_buildSelect($def, $fields);
+		$select = $this->_buildSelect($def, $field_names);
 		$from = $this->_buildFrom($def, $table, $constraint);
-		$where = $this->_buildWhere($def, $constraint);
+		$bind = array();
+		$where = $this->_buildWhere($def, $constraint, $bind);
+		
 //		$order = $order ? $this->_buildOrder($def, $order) : '';
 //		$limit = $limit ? $this->_buildLimit($def, $limit, $offset) : '';
 	
 		$query = implode(' ', array($select, $from, $where));
 
-		return $this->execSelect($query);
+		return $this->_execSelect($query, $bind);
 	}
 	
-	public function count($type, Elixir_Db_Constraint $constraint) {
+	public function count($type, Elixir_Constraint $constraint) {
 		$def = $this->_getDefinition($type);
 		$table = $this->_getTable($type);
 		
 		$select = $this->_buildSelect($def, false);
 		$from = $this->_buildFrom($def, $table, $constraint);
-		$where = $this->_buildWhere($def, $constraint);
+		$bind = array();
+		$where = $this->_buildWhere($def, $constraint, $bind);
 
 		$query = implode(' ', array($select, $from, $where));
 
-		$res = $this->execSelect($query);
+		$res = $this->_execSelect($query, $bind);
 		return (int)$res[0]['count'];
 	}
 	
-	public function update($class, $data, Elixir_Db_Constraint $constraint) {
+	public function update($type, array $fields, Elixir_Constraint $constraint) {
 		$def = $this->_getDefinition($class);
 		$table = $this->_getTable($class);
 		
@@ -73,7 +76,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		return $this->execUpdate($query);
 	} 
 	
-	public function insert($class, $data) {
+	public function insert($type, array $fields) {
 		$def = $this->_getDefinition($class);
 		$table = $this->_getTable($class);
 		
@@ -84,7 +87,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		return $this->execInsert($query);
 	}
 	
-	public function delete($class, Elixir_Db_Constraints $constraints = null) {
+	public function delete($type, Elixir_Constraint $constraint) {
 		$def = $this->_getDefinition($class);
 		$table = $this->_getTable($class);
 		
@@ -95,8 +98,16 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		return $this->execDelete($query);
 	}
 
+	public function normalise($var) {
+		$this->init();
+		if($var instanceof Datetime) {
+			$var = $var->format('Y-m-d H:i:s');
+		}
+		return $var;
+	}
+	
 	protected function _getDefinition($class) {
-		if(!is_subclass_of($class, 'Elixir_Object')) {
+		if(!is_subclass_of($class, 'Elixir_Type')) {
 			require_once 'Elixir/Exception/InvalidClass.php';
 			throw new Elixir_Exception_InvalidClass();
 		}
@@ -104,7 +115,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 	}
 	
 	protected function _getTable($class) {
-		if(!is_subclass_of($class, 'Elixir_Object')) {
+		if(!is_subclass_of($class, 'Elixir_Type')) {
 			require_once 'Elixir/Exception/InvalidClass.php';
 			throw new Elixir_Exception_InvalidClass();
 		}
@@ -137,9 +148,15 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		return $from;
 	}
 	
-	protected function _buildWhere($def, $constraints) {
+	protected function _buildWhere($def, $constraints, &$bind) {
 		$where = 'WHERE ';
 		
+		$where .= $this->_buildConstraints($def, $constraints, $bind);
+		
+		return $where;
+	}
+	
+	protected function _buildConstraints($def, $constraints, &$bind) {
 		$conds = array();
 		foreach($constraints->getFields() as $constraint) {
 			extract($constraint); // field, value
@@ -149,15 +166,19 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 			}
 			switch(true) {
 				// elixir object
-				case is_object($value) && $value instanceof Elixir_Object:
-					if($def[$field]['type'] != get_class($value)) {
-						require_once 'Elixir/Exception/Constraint/InvalidClass.php';
-						throw new Elixir_Exception_Constraint_InvalidClass();
+				case is_object($value) && $value instanceof Elixir_Type:
+					switch(get_class($value)) {
+						case $def[$field]['type']:
+						case $constraints->getType():
+							break;
+						default:
+							require_once 'Elixir/Exception/Constraint/InvalidClass.php';
+							throw new Elixir_Exception_Constraint_InvalidClass();
 					}
 					$fields = $this->_convertObjectToFields($value);
 					$cols = $this->_convertFieldsToCols($def[$field]['field'], $fields);
 				
-					$conds[] = '('.$this->_convertColsToCond($cols).')';
+					$conds[] = '('.$this->_convertColsToCond($cols, $bind).')';
 					break;
 				// elixir array => must match at least one element in array.
 				case is_object($value) && $value instanceof Elixir_Array:
@@ -191,7 +212,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 							require_once 'Elixir/Exception/Definition.php';
 							throw new Elixir_Exception_Definiton($e->getMessage()); 
 						}
-						$or[] = '('.$this->_convertColsToCond(array('d'=>$cols)).')';
+						$or[] = '('.$this->_convertColsToCond(array('d'=>$cols), $bind).')';
 					}
 					$conds[] = '('.implode(' || ', $or).')';
 					break;
@@ -199,30 +220,30 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 				case is_scalar($def[$field]['field']) && is_array($value):
 					$or = array();
 					foreach($value as $val) {
-						$or[] = $this->_convertColsToCond(array('d'=>array($def[$field]['field'] => $val)));
+						$or[] = $this->_convertColsToCond(array('d'=>array($def[$field]['field'] => $val)), $bind);
 					}
 					$conds[] = '('.implode(' || ', $or).')';
 					break;
 				// builtin type with single value => must equal that value
 				case is_scalar($def[$field]['field']) && (is_scalar($value) || is_null($value)):
-					$conds[] = $this->_convertColsToCond(array('d'=>array($def[$field]['field'] => $value)));
+					$conds[] = $this->_convertColsToCond(array('d'=>array($def[$field]['field'] => $value)), $bind);
 					break;
 				// builtin type cannot have an object or resource for a value
 				case is_scalar($def[$field]['field']):
 					require_once 'Elixir/Exception/Constraint.php';
 					throw new Elixir_Exception_Constraint('builtin type cannot have an object or resource for a value');
 				case is_scalar($value) && count($def[$field]['field']) == 1:
-					$conds[] = $this->_convertColsToCond(array(key($def[$field]['field']) => $value));
+					$conds[] = $this->_convertColsToCond(array(key($def[$field]['field']) => $value), $bind);
 					break;
 				case is_array($value) && is_string(key($value)):
 					$cols = $this->_convertFieldsToCond($def[$field]['field'], $value);
-					$conds[] = '('.$this->_convertColsToCond($cols).')';
+					$conds[] = '('.$this->_convertColsToCond($cols, $bind).')';
 					break;
 				case is_array($value) && is_int(key($value)):
 					$or = array();
 					foreach($value as $val) {
 						$cols = $this->_convertFieldsToCols($def[$field]['field'], $value);
-						$or[] = '('.$this->_convertColsToCond($cols).')'; 
+						$or[] = '('.$this->_convertColsToCond($cols, $bind).')'; 
 					}
 					$conds[] = '('.implode(' || ', $or).')';
 					break;
@@ -231,8 +252,10 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 					throw new Elixir_Exception_Constraint('unknown constraint');
 			}
 		}
-		$where .= $conds ? implode(' && ', $conds) : 1;
-		return $where;
+		foreach($constraints->getConstraints() as $constraint) {
+			$conds[] = '('.$this->_buildConstaint($def, $constraint, $bind) . ')';
+		}
+		return $conds ? implode(($constraints->getOp() == Elixir_Constraint::OP_AND) ? ' && ' : ' || ', $conds) : 1;
 	}
 	
 	protected function _buildOrder($def, $order) {
@@ -267,7 +290,7 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 		// convert selected fields to db row
 		foreach((array)$fields as $field) {
 			$value = $obj->$field;
-			if($value instanceof Elixir_Object) {
+			if($value instanceof Elixir_Type) {
 				$value = $this->_convertObjectToFields($value);
 			}
 			$field_vals[$field] = $value;
@@ -277,21 +300,26 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 	
 	protected function _convertFieldsToCols($field_def, $fields) {
 		$cols = array();
-		foreach($field_def as $db_col => $field_q) {
-			$value = $fields;
-			while($field_q) {
-				$field = array_shift($field_q);
-				$value = &$value[$field];
-				if($value instanceof Elixir_Object) {
-					$value = $this->_convertObjectToFields($value);
+		if(is_array($field_def)) {
+			foreach($field_def as $db_col => $field_q) {
+				$value = $fields;
+				while($field_q) {
+					$field = array_shift($field_q);
+					$value = &$value[$field];
+					if($value instanceof Elixir_Type) {
+						$value = $this->_convertObjectToFields($value);
+					}
 				}
+				$cols[$db_col] = $value;
 			}
-			$cols[$db_col] = $value;
+		}
+		else {
+			$cols[$field_def] = current($fields);
 		}
 		return array('d'=>$cols);
 	}
 
-	protected function _convertColsToCond($cols) {
+	protected function _convertColsToCond($cols, &$bind) {
 		$and = array();
 		foreach($cols as $ns => $data) {
 			foreach($data as $col => $value) {
@@ -301,11 +329,17 @@ abstract class Elixir_Db_Adapter implements Elixir_Db_Adapter_Interface {
 				}
 				else {
 					//quote and add to list
-					$and[] = "$ns.$col=" . $this->quote($value); 
+					$value = $this->normalise($value);
+					$and[] = "$ns.$col=?";
+					$bind[] = $value; 
 				}
 			}
 		}
 		return implode(' && ', $and);
 	}
 	
+	abstract protected function _execSelect($query, $bind);
+	abstract protected function _execUpdate($query, $bind);
+	abstract protected function _execInsert($query, $bind);
+	abstract protected function _execDelete($query, $bind);
 }

@@ -37,7 +37,7 @@ class Elixir_Array implements Countable, Iterator {
 	}
 
 	public function setType($type) {
-		if(!is_subclass_of($type, 'Elixir_Object')) {
+		if(!is_subclass_of($type, 'Elixir_Type')) {
 			require_once 'Elixir/Exception/InvalidType.php';
 			throw new Elixir_Exception_InvalidType();
 		}
@@ -46,12 +46,12 @@ class Elixir_Array implements Countable, Iterator {
 	
 	public function getConstraint() {
 		if(!$this->_constraint) {
-			$this->_constraint = new Elixir_Db_Constraint();
+			$this->_constraint = new Elixir_Constraint();
 		}
 		return $this->_constraint;
 	}
 	
-	public function setConstraint(Elixir_Db_Constraint $constraint) {
+	public function setConstraint(Elixir_Constraint $constraint) {
 		$this->_constraint = $constraint;
 		return $this;
 	}
@@ -100,11 +100,15 @@ class Elixir_Array implements Countable, Iterator {
 		$this->rewind();
 	} 
 
+	public function getId() {
+		
+	}
+	
 	/**
 	 * Get an object from a db row.
 	 * 
 	 * @param array $row
-	 * @return Elixir_Object
+	 * @return Elixir_Type
 	 */
 	protected function _load($row) {
 		return call_user_func(array($this->_type, 'getByDbRow'), $row, $this->_session, !$this->_options['lazy']);

@@ -1,9 +1,9 @@
 <?php
 require_once 'Elixir/Session.php';
 require_once 'Elixir/Array.php';
-require_once 'Elixir/Db/Constraint.php';
+require_once 'Elixir/Constraint.php';
 
-abstract class Elixir_Object {
+abstract class Elixir_Type {
 	const STATUS_NEW     = 'new';
 	const STATUS_LOADED  = 'loaded';
 	const STATUS_UPDATED = 'updated';
@@ -163,6 +163,8 @@ abstract class Elixir_Object {
 		if($value !== null) {
 			switch(strtolower(static::$_definition[$name]['type'])) {
 				case 'string':
+				case 'text':
+				case 'blob':
 					return (string)$value;
 				case 'int':
 					return (int)$value;
@@ -171,19 +173,34 @@ abstract class Elixir_Object {
 				case 'boolean':
 					return (boolean)$value;
 				case 'date':
+					// load object if needed
 					if(!$value instanceof DateTime) {
 						$value = new DateTime($value);
 					}
-					return $value;
+					break;
 				default:
-					$class = static::$_definition[$name]['type'];
-					// if value is object, return it as is.
-					if(is_subclass_of($value, $class)) {
-						return $value; 
+					if(in_array(static::$_definition[$name]['relation'], array(self::RELATION_ONE_TO_ONE, self::RELATION_MANY_TO_ONE))) {
+						$class = static::$_definition[$name]['type'];
+						// if value is object, return it as is.
+						if(is_subclass_of($value, $class)) {
+							break; 
+						}
+						// otherwise, load it from the ids.
+						$value = $class::get($value);
 					}
-					// otherwise, load it from the ids.
-					return $class::get($value);
+					elseif(in_array(static::$_definition[$name]['relation'], array(self::RELATION_ONE_TO_MANY, self::RELATION_MANY_TO_MANY))) {
+						$type = static::$_definition[$name]['type'];
+						// if value is array of correct type, return as is.
+						if($value instanceof Elixir_Array && $value->getType() == $type) {
+							break;
+						}
+						//otherwise load it from db.
+						$value = $type::getBy(array($def['remote'] => $this));
+						$value->setConditionReadOnly();
+					}
 			}
+			$this->_values[$name] = $value;
+			return $value;
 		}
 		return null;
 	}
@@ -249,7 +266,8 @@ abstract class Elixir_Object {
 						break;
 					}
 					// if object other than datetime, it is of the wrong class
-					if(!$value instanceof Datetime) {
+					if(is_object($value) && !$value instanceof Datetime) {
+						require_once 'Elixir/Exception.php';
 						throw new Elixir_Exception('this given object is of the wrong class');
 					}
 					// if not array, and the field only has one key, normalise to array
@@ -285,7 +303,7 @@ abstract class Elixir_Object {
 	/**
 	 * Create object without calling the constructor.
 	 * 
-	 * @return Elixir_Object
+	 * @return Elixir_Type
 	 */
 	static protected function _create(array $fields, Elixir_Session $session) {
 		// create serialized string of an empty object
@@ -324,7 +342,7 @@ abstract class Elixir_Object {
 		if(!is_array($id) && count($pks) == 1) {
 			$id = array(current($pks) => $id);
 		}
-		elseif(!is_array($id) || count($pks) != count(array_intersect_keys(array_flip($pks), $id))) {
+		elseif(!is_array($id) || count($pks) != count(array_intersect_key(array_flip($pks), $id))) {
 			require_once 'Elixir/Exception.php';
 			throw new Elixir_Exception('Not all the need keys have been provided');
 		}
@@ -339,7 +357,7 @@ abstract class Elixir_Object {
 			return $obj;
 		}
 		
-		$constraint = new Elixir_Db_Constraint();
+		$constraint = new Elixir_Constraint(get_called_class());
 		foreach($id as $field => $value) {
 			$constraint->addField($field, $value);
 		}
@@ -375,17 +393,17 @@ abstract class Elixir_Object {
 		static::_init();
 		
 		if(!$constraint) {
-			$constraint = new Elixir_Db_Constraint();
+			$constraint = new Elixir_Constraint(get_called_class());
 		}
 		elseif(is_array($constraint)) {
 			$fields = $constraint;
-			$constraint = new Elixir_Db_Constraint();
+			$constraint = new Elixir_Constraint();
 			foreach($fields as $field => $value) {
 				$constraint->addField($field, $value);
 			}
 			unset($fields);
 		}
-		if(!$constraint instanceof Elixir_Db_Constraint) {
+		if(!$constraint instanceof Elixir_Constraint) {
 			require_once 'Elixir/Exception/Constraint';
 			throw new Elixir_Exception_Constraint(); 
 		}
@@ -450,7 +468,7 @@ abstract class Elixir_Object {
 		$id = array();
 		foreach(static::getPrimaryKeyFieldNames() as $field) {
 			$val = $this->$field;
-			if($val instanceof Elixir_Object) {
+			if($val instanceof Elixir_Type) {
 				$val = $val->getId();
 			}
 			$id[] = $val;
@@ -459,7 +477,7 @@ abstract class Elixir_Object {
 	}
 	
 	static protected function _generateId($id) {
-		if($id instanceof Elixir_Object) {
+		if($id instanceof Elixir_Type) {
 			$id = $id->getId();
 		}
 		return get_called_class() .':'. serialize($id);
@@ -501,7 +519,7 @@ abstract class Elixir_Object {
 			require_once 'Elixir/Exception/Definition.php';
 			throw new Elixir_Exception_Definition('no adapter params supplies');
 		}
-		static::$_adapter = Elixir_Db_Adapter::factory(static::$_adapter);
+		static::$_adapter = Elixir_Adapter::factory(static::$_adapter);
 	}
 
 	static protected function _initDefinition() {
@@ -609,7 +627,16 @@ abstract class Elixir_Object {
 					if(!isset($values[$field])) {
 						$values[$field] = array();
 					}
-					$values[$field][$spec['field'][$col]] = $value;
+					$target = &$values[$field];
+					for($i=0; $i < count($spec['field'][$col]) - 1; $i++) {
+						$f = $spec['field'][$col][$i];
+						if(!isset($target[$f])) {
+							$target[$f] = array();
+							$target = &$target[$f];
+						}
+					}
+					$f = $spec['field'][$col][$i];
+					$target[$f] = $value;
 				}
 			}
 		}
@@ -633,9 +660,19 @@ abstract class Elixir_Object {
 			$names = array($name);
 		}
 		
+		// remove any fields that are one_to_many/many_to_many as these are remote references
+		foreach($names as $n) {
+			if(isset($def[$n]['relation']) && in_array($def[$n]['relation'], array(self::RELATION_ONE_TO_MANY, self::RELATION_MANY_TO_MANY))) {
+				unset($names[$n]);
+			}
+		}
+		if(!$names) {
+			return null;
+		}
+		
 		// use primary keys to constrain to a single row
 		$pks = static::getPrimaryKeyFieldNames();
-		$constraint = new Elixir_Db_Constraint();
+		$constraint = new Elixir_Constraint(get_class($this));
 		foreach(array_intersect_key($this->_values, array_flip($pks)) as $field => $value) {
 			$constraint->addField($field, $value);
 		}
@@ -646,11 +683,9 @@ abstract class Elixir_Object {
 			throw new Elixir_Exception('No row with given primary keys found');
 		}
 		
-		$res_values = static::_dbRowToValues($data);
-		
-		// cache the values
-		$this->_values = array_merge($this->_values, $res_values);
-		$this->_dbvalues = array_merge($this->_dbvalues, $res_values);
+		foreach(static::_dbRowToValues($data) as $field => $value) {
+			$this->_set($field, $value, false);
+		}
 		
 		// and finaly return the value that we were asked to load in the first place
 		return $this->_values[$name];
