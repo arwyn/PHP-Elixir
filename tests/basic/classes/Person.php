@@ -1,8 +1,8 @@
 <?php
-require_once 'Elixir/Object.php';
-require_once 'Elixir/Db/Adapter/Pdo.php';
+require_once 'Elixir/Type.php';
+require_once 'Elixir/Adapter/Pdo.php';
 
-class Person extends Elixir_Object {
+class Person extends Elixir_Type {
 	protected static $_table = 'person';
 	protected static $_definition = array(
 		'id' => array(
@@ -25,11 +25,18 @@ class Person extends Elixir_Object {
 		),
 		'height' => array(
 			'type' => 'float'
+		),
+		'partner' => array(
+			'type' => 'Person',
+			'relation' => self::RELATION_ONE_TO_ONE,
+			'field' => array(
+				'partner_id' => array('id')
+			)
 		)
 	);
 	
 	protected static $_adapter = array(
-		'class' => 'Elixir_Db_Adapter_Pdo',
+		'class' => 'Elixir_Adapter_Pdo',
 		'dsn' => 'sqlite:basic.db'
 	); 
 }

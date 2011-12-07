@@ -9,7 +9,7 @@ class ReadTest extends PHPUnit_Framework_TestCase {
 
 	public function testBuiltinTypes() {
 		$person = Person::get(1);
-		$this->assertTrue($person instanceof Elixir_Object, 'must be instance of Elixir_Object');
+		$this->assertTrue($person instanceof Elixir_Type, 'must be instance of Elixir_Type');
 		$this->assertTrue($person instanceof Person, 'must be instance of Person');
 
 		$this->assertType('string', $person->first_name, 'First name must be string');
@@ -42,5 +42,13 @@ class ReadTest extends PHPUnit_Framework_TestCase {
 			$this->assertTrue($person instanceof Person, 'must be instance of Person');
 			$this->assertType('int', $person->id, 'Id must be int');
 		}
+	}
+	
+	public function testOneToOneRelation() {
+		$person = Person::get(1);
+		
+		$partner = $person->partner;
+		$this->assertTrue($partner instanceof Person, 'must be a Person instance');
+		$this->assertEquals(2, $partner->id, 'partner id');
 	}
 }

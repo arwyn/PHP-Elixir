@@ -1,25 +1,53 @@
 <?php
+require_once 'Elixir/Utils.php';
 
 class Elixir_Session {
-	static protected $_instance = null;
+	static private $_registry = null;
+	static private $_default = null;
 	
 	protected $_objects = array();
 	protected $_changes = array();
 	protected $_index = array();
 	protected $_status = array();
 	
+	protected $_oid = null;
+	
 	public function __construct() {
+		$this->_oid = Elixir_Utils::UUIDv4();
+		self::_registerSession($this);
 	}
 	
 	static public function getDefaultSession() {
-		if(!static::$_instance) {
-			static::$_instance = new static();
+		if(!self::$_default) {
+			$session = new self();
+			self::$_default = $session->getOID();
 		}
-		return static::$_instance;
+		return self::getSession(self::$_default);
+	}
+	
+	static public function setDefaultSession(Elixir_Session $session) {
+		$id = $session->getOID();
+		if(!isset(self::$_registry[$id])) {
+			self::_registerSession($session);
+		}
+		self::$_default = $id;
+	}
+	
+	static public function getSession($session_id) {
+		return isset(self::$_registry[$session_id]) ? self::$_registry[$session_id] : null;
+	}
+	
+	static protected function _registerSession(Elixir_Session $session) {
+		$id = $session->getOID();
+		if(isset(self::$_registry[$id])) {
+			require_once 'Elixir/Exception.php';
+			throw new Elixir_Exception('session already registered');
+		}
+		self::$_registry[$id] = $session;
 	}
 	
 	public function setStatus($elixir, $details = null) {
-		$hash = spl_object_hash($elixir);
+		$hash = $elixir->getOID();
 		
 		// if not in session, add.
 		if(!isset($this->_objects[$hash])) {
@@ -27,7 +55,7 @@ class Elixir_Session {
 		}
 		// if we can index id, do so
 		if($id = $elixir->getId()) {
-			$this->_index[$id] = $hash;
+			$this->_index[serialize($id)] = $hash;
 		}
 		// index the change that was made.
 		if($details) {
@@ -48,5 +76,9 @@ class Elixir_Session {
 	
 	public function get($id) {
 		return isset($this->_index[$id]) ? $this->_objects[$this->_index[$id]] : false;
+	}
+	
+	public function getOID() {
+		return $this->_oid;
 	}
 }
