@@ -1,6 +1,8 @@
 <?php
 namespace Elixir;
 
+use Exception\Model as Exception;
+
 require_once 'Exception.php';
 require_once 'Query.php';
 require_once 'Session.php';
@@ -8,17 +10,16 @@ require_once 'Session.php';
 class Model {
 	const LAZYLOAD = 1;
 	
-	private static abstract $_config_db = null;
-	private static abstract $_config_properties = null;
-	
-	protected $_session = null;
-	protected $_id = null;
-	protected $_properties = null;
+	private static abstract $_elixir_config = null;
 
-	public function __construct($data, $options = 0, $session = null) {
+	protected $_elixir_container = null;
+	protected $_elixir_session = null;
+	protected $_elixir_id = null;
+
+	public function __construct($data = null, $options = 0, $session = null) {
 		static::_init();
 		
-		$this->_session = $session;
+		$this->_elixir_session = $session;
 		
 		Session::get($session)->addActivity('new', $this);
 		foreach($data as $property => $value) {
@@ -27,39 +28,11 @@ class Model {
 	}
 	
 	public function __get($name) {
-		if(!isset($this->_properties[$name])) {
-			$this->_loadProperty($name);
-		}
-		if(!isset(static::$_config_properties[$name])) {
-			throw new ModelException('Invalid Property', Exception::INVALID_PROPERY);
+		if(!isset(static::$_elixir_config['properties'][$name])) {
+			throw new Exception('Invalid Property', Exception::INVALID_PROPERY);
 		}
 		
-		$property = $this->_properties[$name];
-		if($property !== null) {
-			switch($model = static::$_config_properties[$name]['model']) {
-				case null:
-					break;
-				case 'int':
-					$property = (int)$property;
-					break;
-				case 'float':
-				case 'double':			
-					$property = (float)$property;
-					break;
-				case 'bool':
-				case 'boolean':			
-					$property = (boolean)$property;
-					break;
-				case 'string':
-					$property = (string)$property;
-					break;
-				default:
-					$property = $model::get(array('id'=>$property), $this->_session, static::LAZYLOAD);
-					break;
-			}
-		}
-		
-		return $property;
+		return $this->getProperty($name, static::$_elixir_config['properties'][$name]['model']);
 	}
 	
 	public function __set($name, $value) {
@@ -125,16 +98,52 @@ class Model {
 		}
 		return $this->_id;
 	}
-	
-	public function getChanges() {
-		$keys = array_filter($this->_changes);
-		return array_intersect_keys($this->_properties, array_flip($keys));
+
+	public function getProperty($name, $as = null) {
+		if(!isset(static::$_elixir_config['properties'][$name])) {
+			throw new Exception('Invalid Property', Exception::INVALID_PROPERY);
+		}
+		
+		$property = $this->_elixir_loadProperty($name);
+		
+		switch($as) {
+			case null:
+				break;
+			case 'int':
+				$property = (int)current($property);
+				break;
+			case 'float':
+			case 'double':
+				$property = (float)current($property);
+				break;
+			case 'bool':
+			case 'boolean':
+				$property = (boolean)current($property);
+				break;
+			case 'string':
+				$property = (string)current($property);
+				break;
+			default:
+				$query = array();
+				foreach(static::$_elixir_config['properties'][$name]['fields'] as $local => $ref) {
+					$query[$ref] = $property[$local];
+				}
+				$property = $name::get($query, $this->_elixir_session, static::LAZYLOAD);
+				break;
+		}
+		return $property;
 	}
 	
-	public static function get($id, $session = null, $options = 0) {
+	public function getChanges() {
+		$keys = array_filter($this->_elixir_container['changes']);
+		return array_intersect_keys($this->_elixir_container['fields'], array_flip($keys));
+	}
+	
+	public static function get($query, $session = null, $options = 0) {
 		static::_init();
 
-		$model = static::__get_state(array('id' => $id_assoc, 'session' => $session));
+		static::_normaliseId($properties, $id)
+		$model = static::__get_state(array($query, 'session' => $session));
 		
 		if($options & static::LAZYLOAD) {
 			$model->_properties = $id_assoc;
@@ -181,7 +190,7 @@ class Model {
 		}
 	}
 	
-	private static function _normaliseId($properties, $id) {
+	private static function _elixir_getIdFromFields($properties) {
 		$id_assoc = array();
 		foreach($id as $k => $v) {
 			if(is_int($k)) {
@@ -190,7 +199,7 @@ class Model {
 			$id_assoc[$k] = $v;
 		}
 		if(count(array_intersect_keys($id_assoc, array_flip($properties))) != count($properties)) {
-			throw new ModelException('Not all key properties given', Exception::QUERY_FIELD_COUNT_INCORRECT);
+			throw new Exception('Not all key properties given', Exception::QUERY_FIELD_COUNT_INCORRECT);
 		}
 		return $id_assoc;
 	}
