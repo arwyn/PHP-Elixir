@@ -3,23 +3,17 @@ namespace Elixir;
 
 use Exception\Model as Exception;
 
-require_once 'Exception.php';
-require_once 'Query.php';
-require_once 'Session.php';
-
 class Model {
 	const LAZYLOAD = 1;
 	
 	private static abstract $_elixir_config = null;
 
 	protected $_elixir_container = null;
-	protected $_elixir_session = null;
-	protected $_elixir_id = null;
 
 	public function __construct($data = null, $options = 0, $session = null) {
 		static::_init();
 		
-		$this->_elixir_session = $session;
+		$this->_elixir_container['session'] = $session;
 		
 		Session::get($session)->addActivity('new', $this);
 		foreach($data as $property => $value) {
@@ -36,24 +30,29 @@ class Model {
 	}
 	
 	public function __set($name, $value) {
-		if(!isset(static::$_config_properties[$name])) {
-			throw new ModelException('Invalid Property', Exception::INVALID_PROPERY);
+		if(!isset(static::$_elixir_config['properties'][$name])) {
+			throw new Exception('Invalid Property', Exception::INVALID_PROPERY);
 		}
 		
-		$model_class = static::$_config_properties[$name]['model'];
+		$model_class = static::$_elixir_config['properties'][$name]['model'];
 		if($model_class && !in_array($model_class, array('int','float','double','bool','boolean','string'))) {
 			if($value instanceof $model_class) {
-				$value = $value->getId();
+				$value = $value->getId(true);
 			}
 			else {
-				$config = $model_class::getDbConfig();
-				$value = static::_normaliseId($config['id']['property'], $value);
+				$value = Core::getIdFromFields($model_class, $value);
 			}
 		}
-		if(!isset($this->_properties[$name]) || $this->_properties[$name] = $value) {
-			$this->_properties[$name] = $value;
-			$this->_changes[$name] = true;
-			Session::get($this->_session)->addActivity('update', $this);
+		else {
+			$value = Core::getFieldsFromProperty($model_class, $name, $value);
+		}
+		
+		foreach($value as $field => $val) {
+			if(!isset($this->_elixir_container['fields'][$field]) || $this->_elixir_container['fields'][$field] != $val)  {
+				$this->_elixir_container['fields'][$field] = $value;
+				$this->_elixir_container['changed'][$field] = true;
+				$this->getSession()->addActivity('update', $this);
+			}
 		}
 	}
 	
@@ -65,38 +64,41 @@ class Model {
 			'session' => null,
 			'properties' => array()
 		), $data);
-		
+	
 		if(!isset($data['id'])) {
-			throw new ModelException('Id not given', Exception::QUERY_FIELD_COUNT_INCORRECT);
+			throw new Exception('Id not given', Exception::QUERY_FIELD_COUNT_INCORRECT);
 		}
-		
-		extract($data); // id, session, properties
-		
-		if(!is_array($id)) {
-			$id = array($id);
+
+		if(!is_array($data['id'])) {
+			$data['id'] = array($data['id']);
 		}
-		
-		$id_assoc = static::_normaliseId(static::$_config_db['id']['property'], $id);
-		
-		if(array_diff_keys($properties, static::$_config_properties)) {
-			throw new ModelException('Invalid property given', Exception::INVALID_PROPERTY);
+	
+		$model_class = get_called_class();
+		$data['id'] = Core::getIdFromFields($model_class, $data['id']);
+	
+		$fields = array();
+		foreach($data['properties'] as $name => $value) {
+			$fields = array_merge($fields, Core::getFieldsFromProperties($model_class, $name, $value));
 		}
-		
-		$class = get_called_class();
-		$model = unserialize('O:'.count($class).'"'.$class.'":0:{}');
-		
-		$model->_id = $id_assoc;
-		$model->_session = $session;
-		$model->_properties = $properties;
-		
+		unset($data['properties']);
+		foreach($data['fields'] as $name => $value) {
+			Core::assertFieldIsValid($model_class, $name);
+			$fields[$name] = $value;
+		}
+		$data['fields'] = $fields;
+
+		$model = unserialize('O:'.count($model_class).'"'.$model_class.'":0:{}');
+	
+		$model->_elixir_container = $data;
+
 		return $model;
 	}
 	
 	public function getId($full = false) {
-		if(!$full && $this->_id && count($this->_id) == 1) {
-			return current($this->_id);
+		if(!$full && $this->_elixir_container['id'] && count($this->_elixir_container['id']) == 1) {
+			return current($this->_elixir_container['id']);
 		}
-		return $this->_id;
+		return $this->_elixir_container['id'];
 	}
 
 	public function getProperty($name, $as = null) {
@@ -128,7 +130,12 @@ class Model {
 				foreach(static::$_elixir_config['properties'][$name]['fields'] as $local => $ref) {
 					$query[$ref] = $property[$local];
 				}
-				$property = $name::get($query, $this->_elixir_session, static::LAZYLOAD);
+				if(static::$_elixir_config['properties'][$name]['ref'] == 'm') {
+					$property = $name::get($query, $this->_elixir_container['session'], static::LAZYLOAD);
+				}
+				else {
+					$property = $name::query($query, $this->_elixir_container['session']);
+				}
 				break;
 		}
 		return $property;
@@ -142,51 +149,42 @@ class Model {
 	public static function get($query, $session = null, $options = 0) {
 		static::_init();
 
-		static::_normaliseId($properties, $id)
-		$model = static::__get_state(array($query, 'session' => $session));
+		if(!is_array($query)) {
+			$query = array('id'=>$query);
+		}
+		if(!is_array($query['id'])) {
+			$query['id'] = array($query['id']);
+		}
 		
-		if($options & static::LAZYLOAD) {
-			$model->_properties = $id_assoc;
+		$model_class = get_called_class();
+		
+		if(isset($query['id']) && $options & static::LAZYLOAD) {
+			$id = Core::getIdFromFields($model_class, $query['id']);			
+			unset($query['id']);
+			$model = $model_class::__get_state(array('id' => $id, 'properties' => $query, 'session' => $session));;
 		}
 		else {
-			$model->_loadProperty(array_keys($id_assoc));
+			$model = null;
+			$result = $model_class::query($query, $session)->setLimit(2,0);
+			$i = 0;
+			foreach($result as $model) {
+				$i++;
+			}
+			if($i > 1) {
+				throw new Exception('too many results returned for a unique value', Exception::TOO_MANY_RESULTS);
+			}
 		}
 		
 		return $model;
 	}
 	
-	public static function query($constraint, $session = null, $options = 0) {
+	public static function query($query, $session = null, $options = 0) {
 		static::_init();
 	}
 	
-	public static function getConfigDb() {
-		static::_init();
-		return static::$_config_db;
-	}
-	
-	public static function getConfigProperties() {
-		static::_init();
-		return static::$_config_properties;
-	}
-	
-	protected static function _init() {
-		if(!static::$_config_db) {
-			static::_initConfigDb();
-		}
-		if(!static::$_config_properties) {
-			static::_initConfigProperties();			
-		}
-	}
-	
-	protected static function _initConfigDb() {
-		if(!static::_config_db) {
-			throw new ModelException('Missing db config', Exception::CONFIG_MISSING);
-		}
-	}
-	
-	protected static function _initConfigProperties() {
-		if(!static::_config_properties) {
-			throw new ModelException('Missing property config', Exception::CONFIG_MISSING);
+	public static function getConfig() {
+		if(!static::$_elixir_config) {
+			static::$_elixir_config = Core::extractConfigFromClass(get_called_class());
 		}
 	}
 	
